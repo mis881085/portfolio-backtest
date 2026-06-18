@@ -552,7 +552,11 @@ function computeAnnual(navList) {
   const byYear = {};
   for (const { date, nav } of navList) byYear[date.slice(0, 4)] = nav;
   const years = Object.keys(byYear).sort();
-  return years.slice(1).map(y => ({ year: y, ret: byYear[y] / byYear[years[years.indexOf(y)-1]] - 1 }));
+  const firstNav = navList[0].nav;
+  return years.map((y, i) => ({
+    year: y,
+    ret: i === 0 ? byYear[y] / firstNav - 1 : byYear[y] / byYear[years[i - 1]] - 1,
+  }));
 }
 
 // ============================================================
@@ -583,6 +587,7 @@ function _runAll() {
     const valid = p.assets.filter(a => a.ticker && state.tickerData[a.ticker]);
     const total = valid.reduce((s, a) => s + a.weight, 0);
     if (valid.length === 0)              { errors.push(`"${p.name}"：尚未選擇任何標的`); continue; }
+    if (new Set(valid.map(a => a.ticker)).size !== valid.length) { errors.push(`"${p.name}"：包含重複的標的，請合併後再執行`); continue; }
     if (Math.abs(total - 100) > 0.01)   { errors.push(`"${p.name}"：比重總和 ${total.toFixed(1)}%，須為 100%`); continue; }
     const res = runBacktest(valid, params);
     if (res) state.results[p.name] = res;
