@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>退休資產配置回測</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js" charset="utf-8"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; color: #1a1a2e; font-size: 14px; }
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+.subtitle { color: #6b7280; font-size: 13px; margin-bottom: 24px; }
+.card { background: white; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 20px; margin-bottom: 16px; }
+.card-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.step-badge { background: #6366f1; color: white; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+
+/* Drop zone */
+.drop-zone { border: 2px dashed #d1d5db; border-radius: 8px; padding: 28px; text-align: center; cursor: pointer; transition: all .2s; color: #9ca3af; }
+.drop-zone:hover, .drop-zone.drag-over { border-color: #6366f1; color: #6366f1; background: #f5f3ff; }
+.drop-zone svg { width: 34px; height: 34px; margin-bottom: 8px; }
+.drop-zone p { font-size: 13px; }
+.drop-hint { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+
+/* Chips */
+.ticker-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; min-height: 28px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.chip-tw { background: #dbeafe; color: #1e40af; }
+.chip-us { background: #dcfce7; color: #166534; }
+.chip-fx { background: #fef3c7; color: #92400e; }
+
+/* Portfolio builder */
+.portfolio-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; margin-bottom: 10px; }
+.portfolio-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.portfolio-name { flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: 13px; background: white; }
+.btn-icon { background: none; border: none; cursor: pointer; color: #9ca3af; padding: 4px 6px; border-radius: 4px; font-size: 14px; line-height: 1; }
+.btn-icon:hover { color: #ef4444; background: #fee2e2; }
+.asset-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.asset-row select { flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 5px 8px; font-size: 13px; background: white; min-width: 0; }
+.asset-row input[type=number] { width: 70px; border: 1px solid #d1d5db; border-radius: 6px; padding: 5px 8px; font-size: 13px; text-align: right; flex-shrink: 0; -moz-appearance: textfield; }
+.asset-row input[type=number]::-webkit-inner-spin-button,
+.asset-row input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.weight-unit { color: #6b7280; font-size: 13px; flex-shrink: 0; }
+.weight-total { font-size: 12px; margin-top: 4px; }
+.weight-ok { color: #16a34a; }
+.weight-err { color: #dc2626; }
+.row-bottom { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.btn-add-asset { background: none; border: 1px dashed #d1d5db; color: #9ca3af; padding: 4px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.btn-add-asset:hover { border-color: #6366f1; color: #6366f1; }
+
+/* General buttons */
+.btn { padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: all .15s; }
+.btn-primary { background: #6366f1; color: white; }
+.btn-primary:hover { background: #4f46e5; }
+.btn-secondary { background: white; color: #374151; border: 1px solid #d1d5db; }
+.btn-secondary:hover { background: #f9fafb; }
+.btn-run { padding: 12px 32px; font-size: 15px; width: 100%; margin-top: 4px; }
+
+/* Settings */
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.setting-row { display: flex; flex-direction: column; gap: 4px; }
+.setting-row label { font-size: 12px; color: #6b7280; }
+.setting-row input { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+.collapsible-toggle { background: none; border: none; cursor: pointer; font-size: 12px; color: #6366f1; margin-left: auto; }
+.opt-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #374151; }
+.opt-row input[type=checkbox] { width: 15px; height: 15px; accent-color: #6366f1; flex-shrink: 0; }
+
+/* Results */
+.results-hidden { display: none; }
+.summary-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.summary-table th { background: #f3f4f6; text-align: left; padding: 8px 12px; font-weight: 600; color: #6b7280; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+.summary-table td { padding: 8px 12px; border-bottom: 1px solid #f3f4f6; }
+.summary-table tr:last-child td { border-bottom: none; }
+.positive { color: #16a34a; font-weight: 600; }
+.negative { color: #dc2626; font-weight: 600; }
+.annual-wrap { overflow-x: auto; }
+.annual-table { border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+.annual-table th, .annual-table td { padding: 6px 10px; text-align: right; border: 1px solid #e5e7eb; }
+.annual-table th { background: #f3f4f6; font-weight: 600; color: #6b7280; }
+.annual-table td:first-child { text-align: left; color: #6b7280; font-weight: 600; }
+.annual-table td.has-tip { cursor: default; }
+.annual-table td.has-tip:hover { outline: 2px solid #6366f1; outline-offset: -2px; }
+#rebalTooltip { position: fixed; background: #1e293b; color: #f1f5f9; font-size: 12px; line-height: 1.6; padding: 10px 14px; border-radius: 8px; white-space: pre; pointer-events: none; z-index: 9999; display: none; box-shadow: 0 4px 16px rgba(0,0,0,.3); max-width: 340px; }
+.bottom-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div id="rebalTooltip"></div>
+<div class="container">
+  <h1>退休資產配置回測</h1>
+  <p class="subtitle">載入 JSON 資料檔，設定投資組合，比較長期績效</p>
+
+  <!-- Step 1 -->
+  <div class="card">
+    <div class="card-title"><span class="step-badge">1</span>載入資料檔</div>
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" multiple accept=".json">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+      </svg>
+      <p>拖放 JSON 檔案，或從瀏覽器拖入連結（可多選）</p>
+      <p class="drop-hint">data_*.json + data_FX_USDTWD.json（由 export_data.py 產生）</p>
+    </div>
+    <div class="ticker-chips" id="tickerChips">
+      <span style="color:#9ca3af;font-size:12px">尚未載入任何資料</span>
+    </div>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="card">
+    <div class="card-title"><span class="step-badge">2</span>設定投資組合</div>
+    <div id="portfoliosContainer"></div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:4px">
+      <button class="btn btn-secondary" id="addPortfolioBtn">＋ 新增投資組合</button>
+      <label class="opt-row">
+        <input type="checkbox" id="benchmarkCheck" checked>
+        自動加入各標的 100% Benchmark
+      </label>
+    </div>
+  </div>
+
+  <!-- Step 3 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-badge">3</span>回測參數
+      <button class="collapsible-toggle" id="settingsToggle">▲ 收合</button>
+    </div>
+    <div id="settingsBody">
+      <p style="font-size:12px;color:#6b7280;margin-bottom:12px;">策略說明：期初一次性全數投入（All-in），每年 12 月底彙整當年股息後，依目標比例計算並再平衡投入。</p>
+      <div class="settings-grid">
+        <div class="setting-row">
+          <label>期初金額（台幣）</label>
+          <input type="number" id="initTwd" value="10000000" step="1000000">
+        </div>
+        <div class="setting-row">
+          <label>換匯單邊價差</label>
+          <input type="number" id="fxSpread" value="0.0015" step="0.0001">
+        </div>
+        <div class="setting-row">
+          <label>台股手續費（買入）</label>
+          <input type="number" id="twFee" value="0.001425" step="0.0001">
+        </div>
+        <div class="setting-row">
+          <label>台股 ETF 證交稅（賣出）</label>
+          <input type="number" id="twSellTax" value="0.001" step="0.0001">
+        </div>
+        <div class="setting-row">
+          <label>美股股息預扣稅</label>
+          <input type="number" id="usDivTax" value="0.30" step="0.01">
+        </div>
+        <div class="setting-row">
+          <label>台股股息稅（0 = 免稅）</label>
+          <input type="number" id="twDivTax" value="0.00" step="0.01">
+        </div>
+        <div class="setting-row">
+          <label>美股複委託費用（單邊，0 = 海外券商）</label>
+          <input type="number" id="usFee" value="0.001" step="0.0001">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn btn-primary btn-run" id="runBtn">執行回測</button>
+
+  <!-- Results -->
+  <div id="results" class="results-hidden">
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">績效摘要</div>
+      <div style="overflow-x:auto"><div id="summaryTableWrap"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">淨值走勢（期初＝1，台幣計價）</div>
+      <div id="chart" style="height:420px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">各年度報酬率</div>
+      <div class="annual-wrap"><div id="annualTableWrap"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const state = {
+  tickerData: {},  // ticker -> {ticker, currency, data:[{date,close,div}]}
+  fxData: null,    // {pair, data:[{date,rate}]}
+  portfolios: [],
+  results: {},
+};
+let pidCounter = 0;
+
+// ============================================================
+// Utilities
+// ============================================================
+function isTW(t) { return t.endsWith('.TW') || t.endsWith('.TWO'); }
+
+function fmtPct(n) {
+  const s = (n * 100).toFixed(1) + '%';
+  return n >= 0 ? '+' + s : s;
+}
+function fmtTwd(n) {
+  return 'NT$' + Math.round(n).toLocaleString('zh-TW');
+}
+
+// Largest index where arr[i] <= target; -1 if none
+function bisectLE(arr, target) {
+  let lo = 0, hi = arr.length - 1, res = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] <= target) { res = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return res;
+}
+
+// ============================================================
+// File Loading
+// ============================================================
+function handleFiles(files) {
+  Array.from(files).forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const json = JSON.parse(e.target.result);
+        if (json.pair === 'USD_TWD') {
+          state.fxData = json;
+        } else if (json.ticker) {
+          state.tickerData[json.ticker] = json;
+        }
+        renderChips();
+        renderPortfolios();
+      } catch (err) {
+        alert('無法解析 ' + file.name + '：' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
+function handleUrls(urls) {
+  urls.forEach(url => {
+    url = url.trim();
+    if (!url) return;
+    fetch(url)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(json => {
+        if (json.pair === 'USD_TWD') {
+          state.fxData = json;
+        } else if (json.ticker) {
+          state.tickerData[json.ticker] = json;
+        }
+        renderChips();
+        renderPortfolios();
+      })
+      .catch(err => alert('無法載入 ' + url + '：' + err.message));
+  });
+}
+
+function renderChips() {
+  const el = document.getElementById('tickerChips');
+  const chips = [];
+  if (state.fxData) {
+    const d = state.fxData.data;
+    chips.push(`<span class="chip chip-fx">💱 USD/TWD 匯率（${d[0].date} ~ ${d[d.length-1].date}）</span>`);
+  }
+  for (const tkr of Object.keys(state.tickerData).sort()) {
+    const d = state.tickerData[tkr].data;
+    const cls = isTW(tkr) ? 'chip-tw' : 'chip-us';
+    chips.push(`<span class="chip ${cls}">${tkr} <span style="font-weight:400;opacity:.7">${d[0].date.slice(0,4)}~${d[d.length-1].date.slice(0,4)}</span></span>`);
+  }
+  el.innerHTML = chips.length ? chips.join('') : '<span style="color:#9ca3af;font-size:12px">尚未載入任何資料</span>';
+}
+
+// ============================================================
+// Portfolio Builder
+// ============================================================
+function addPortfolio() {
+  const id = ++pidCounter;
+  state.portfolios.push({ id, name: `投資組合 ${id}`, assets: [{ ticker: '', weight: 100 }] });
+  renderPortfolios();
+}
+function removePortfolio(id) {
+  state.portfolios = state.portfolios.filter(p => p.id !== id);
+  renderPortfolios();
+}
+function addAsset(id) {
+  const p = state.portfolios.find(p => p.id === id);
+  if (p) { p.assets.push({ ticker: '', weight: 0 }); renderPortfolios(); }
+}
+function removeAsset(id, idx) {
+  const p = state.portfolios.find(p => p.id === id);
+  if (p && p.assets.length > 1) { p.assets.splice(idx, 1); renderPortfolios(); }
+}
+function onNameChange(id, val) {
+  const p = state.portfolios.find(p => p.id === id); if (p) p.name = val;
+}
+function onTickerChange(id, idx, val) {
+  const p = state.portfolios.find(p => p.id === id); if (p) p.assets[idx].ticker = val;
+}
+function onWeightChange(id, idx, val) {
+  const p = state.portfolios.find(p => p.id === id);
+  if (!p) return;
+  p.assets[idx].weight = +val;
+  // 只更新合計顯示，不重建整個 DOM（避免 oninput 時焦點跳掉）
+  const totalW = p.assets.reduce((s, a) => s + (+a.weight || 0), 0);
+  const wOk = Math.abs(totalW - 100) < 0.01;
+  const el = document.getElementById(`wt-${id}`);
+  if (el) {
+    el.textContent = `總計 ${totalW.toFixed(1)}% ${wOk ? '✓' : '⚠ 須加總為 100%'}`;
+    el.className = `weight-total ${wOk ? 'weight-ok' : 'weight-err'}`;
+  }
+}
+
+function renderPortfolios() {
+  const tickers = Object.keys(state.tickerData).sort();
+  const container = document.getElementById('portfoliosContainer');
+  if (state.portfolios.length === 0) {
+    container.innerHTML = '<p style="color:#9ca3af;font-size:13px;text-align:center;padding:16px 0">尚無投資組合，點擊下方按鈕新增</p>';
+    return;
+  }
+  container.innerHTML = state.portfolios.map(p => {
+    const totalW = p.assets.reduce((s, a) => s + (+a.weight || 0), 0);
+    const wOk = Math.abs(totalW - 100) < 0.01;
+    const assetRows = p.assets.map((a, idx) => {
+      const opts = tickers.map(t => `<option value="${t}"${t === a.ticker ? ' selected' : ''}>${t}</option>`).join('');
+      return `<div class="asset-row">
+        <select onchange="onTickerChange(${p.id},${idx},this.value)">
+          <option value="">— 選擇標的 —</option>${opts}
+        </select>
+        <input type="number" min="0" max="100" value="${a.weight}"
+          oninput="onWeightChange(${p.id},${idx},this.value)">
+        <span class="weight-unit">%</span>
+        <button class="btn-icon" onclick="removeAsset(${p.id},${idx})" title="移除">✕</button>
+      </div>`;
+    }).join('');
+    return `<div class="portfolio-card">
+      <div class="portfolio-header">
+        <input class="portfolio-name" value="${p.name}"
+          oninput="onNameChange(${p.id},this.value)">
+        <button class="btn-icon" onclick="removePortfolio(${p.id})" title="刪除">🗑</button>
+      </div>
+      ${assetRows}
+      <div class="row-bottom">
+        <button class="btn-add-asset" onclick="addAsset(${p.id})">＋ 新增標的</button>
+        <span id="wt-${p.id}" class="weight-total ${wOk ? 'weight-ok' : 'weight-err'}">
+          總計 ${totalW.toFixed(1)}% ${wOk ? '✓' : '⚠ 須加總為 100%'}
+        </span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
+// Backtest Engine
+// ============================================================
+function runBacktest(assets, params) {
+  const { initTwd, fxSpread, twFee, twSellTax, usDivTax, twDivTax, usFee } = params;
+  const tickers = assets.map(a => a.ticker);
+  const weights = {};
+  assets.forEach(a => weights[a.ticker] = a.weight / 100);
+
+  // Pre-build sorted arrays and div maps
+  const tkrDates = {}, tkrCloses = {}, tkrDivMaps = {};
+  for (const tkr of tickers) {
+    const rows = state.tickerData[tkr].data;
+    tkrDates[tkr]  = rows.map(r => r.date);
+    tkrCloses[tkr] = rows.map(r => r.close);
+    tkrDivMaps[tkr] = new Map(rows.filter(r => r.div > 0).map(r => [r.date, r.div]));
+  }
+  const fxDates = state.fxData.data.map(r => r.date);
+  const fxRates = state.fxData.data.map(r => r.rate);
+
+  // Union of ticker trading dates only（FX 只做 ffill 查詢，不加入日期軸）
+  const dateSet = new Set();
+  for (const tkr of tickers) tkrDates[tkr].forEach(d => dateSet.add(d));
+
+  // Common start = max of all first dates
+  const commonStart = tickers
+    .map(tkr => tkrDates[tkr][0])
+    .concat(fxDates[0])
+    .reduce((a, b) => a > b ? a : b);
+
+  const allDates = Array.from(dateSet).filter(d => d >= commonStart).sort();
+  if (allDates.length === 0) return null;
+
+  // Helpers
+  const getClose = (tkr, date) => {
+    const i = bisectLE(tkrDates[tkr], date);
+    return i >= 0 ? tkrCloses[tkr][i] : null;
+  };
+  const getFx = date => {
+    const i = bisectLE(fxDates, date);
+    return i >= 0 ? fxRates[i] : null;
+  };
+  const getDiv = (tkr, date) => tkrDivMaps[tkr].get(date) ?? 0;
+
+  // Rebalance dates: last trading day of each December
+  const lastByYear = {};
+  for (const d of allDates) lastByYear[d.slice(0, 4)] = d;
+  const rebalanceDates = new Set(
+    Object.values(lastByYear).filter(d => d.slice(5, 7) === '12')
+  );
+
+  // Initial allocation
+  const fx0 = getFx(allDates[0]);
+  const units = {};
+  for (const a of assets) {
+    const t = a.ticker, p0 = getClose(t, allDates[0]);
+    if (!p0 || !fx0) return null;
+    const allocTwd = initTwd * weights[t];
+    units[t] = isTW(t)
+      ? allocTwd / (p0 * (1 + twFee))
+      : (allocTwd / (fx0 * (1 + fxSpread))) / (p0 * (1 + usFee));
+  }
+
+  let cashTwd = 0, cashUsd = 0;
+  const navList = [];
+  const rebalLogs = {};   // year -> log object
+  let isFirstRebal = true;
+
+  for (const date of allDates) {
+    const fx = getFx(date);
+    if (!fx) continue;
+
+    // Cache prices for this date
+    const prices = {};
+    for (const t of tickers) prices[t] = getClose(t, date);
+
+    // Dividends → cash (tax applied)
+    for (const t of tickers) {
+      const divAmt = getDiv(t, date);
+      if (divAmt > 0) {
+        const after = units[t] * divAmt * (1 - (isTW(t) ? twDivTax : usDivTax));
+        if (isTW(t)) cashTwd += after; else cashUsd += after;
+      }
+    }
+
+    // NAV in TWD
+    const navTwd = () => {
+      let tw = cashTwd, us = cashUsd;
+      for (const t of tickers) {
+        if (isTW(t)) tw += units[t] * prices[t];
+        else         us += units[t] * prices[t];
+      }
+      return tw + us * fx;
+    };
+
+    // Year-end rebalance
+    if (rebalanceDates.has(date)) {
+      const unitsBefore = {};
+      for (const t of tickers) unitsBefore[t] = units[t];
+
+      const total = navTwd();
+
+      // 1. Sell overweight → cash
+      for (const t of tickers) {
+        const p = prices[t];
+        const currTwd = isTW(t) ? units[t] * p : units[t] * p * fx;
+        const excess = currTwd - total * weights[t];
+        if (excess > 0) {
+          if (isTW(t)) {
+            units[t] -= excess / p;
+            cashTwd  += excess * (1 - twFee - twSellTax);
+          } else {
+            const eu = excess / fx;
+            units[t] -= eu / p;
+            cashUsd  += eu * (1 - usFee);
+          }
+        }
+      }
+
+      // 2. FX conversion if needed
+      const needTwd = tickers.filter(t =>  isTW(t)).reduce((s,t) => s + Math.max(0, total*weights[t] - units[t]*prices[t]), 0);
+      const needUsd = tickers.filter(t => !isTW(t)).reduce((s,t) => s + Math.max(0, total*weights[t]/fx - units[t]*prices[t]), 0);
+
+      if (cashTwd > needTwd && needUsd > cashUsd) {
+        const x = Math.min(cashTwd - needTwd, (needUsd - cashUsd) * fx * (1 + fxSpread));
+        cashTwd -= x;
+        cashUsd += x / (fx * (1 + fxSpread));
+      } else if (cashUsd > needUsd && needTwd > cashTwd) {
+        const x = Math.min(cashUsd - needUsd, (needTwd - cashTwd) / (fx * (1 - fxSpread)));
+        cashUsd -= x;
+        cashTwd += x * fx * (1 - fxSpread);
+      }
+
+      // 3. Buy underweight
+      for (const t of tickers) {
+        const p = prices[t];
+        const currTwd = isTW(t) ? units[t] * p : units[t] * p * fx;
+        const deficit = total * weights[t] - currTwd;
+        if (deficit > 0) {
+          if (isTW(t)) {
+            const spend = Math.min(deficit * (1 + twFee), cashTwd);
+            units[t]  += spend / (p * (1 + twFee));
+            cashTwd   -= spend;
+          } else {
+            const du = deficit / fx;
+            const spend = Math.min(du * (1 + usFee), cashUsd);
+            units[t] += spend / (p * (1 + usFee));
+            cashUsd  -= spend;
+          }
+        }
+      }
+
+      if (!isFirstRebal) {
+        const year = date.slice(0, 4);
+        let twTwd = 0, usUsd = 0;
+        const items = tickers.map(t => {
+          const p = prices[t], delta = units[t] - unitsBefore[t];
+          if (isTW(t)) twTwd += units[t] * p;
+          else         usUsd += units[t] * p;
+          return { ticker: t, price: p, before: unitsBefore[t], after: units[t], delta };
+        });
+        rebalLogs[year] = { date, fx, items, twTwd, usUsd, total };
+      }
+      isFirstRebal = false;
+    }
+
+    navList.push({ date, nav: navTwd() });
+  }
+  return { navList, rebalLogs };
+}
+
+// ============================================================
+// Metrics
+// ============================================================
+function computeMetrics(navList) {
+  if (!navList || navList.length < 2) return null;
+  const first = navList[0], last = navList[navList.length - 1];
+  const years = (new Date(last.date) - new Date(first.date)) / (365.25 * 86400000);
+  const cagr = Math.pow(last.nav / first.nav, 1 / years) - 1;
+  let peak = first.nav, mdd = 0, mddDate = first.date;
+  for (const { date, nav } of navList) {
+    if (nav > peak) peak = nav;
+    const dd = nav / peak - 1;
+    if (dd < mdd) { mdd = dd; mddDate = date; }
+  }
+  // 年化標準差（日報酬率 × √252）
+  const dailyRets = [];
+  for (let i = 1; i < navList.length; i++)
+    dailyRets.push(navList[i].nav / navList[i-1].nav - 1);
+  const mean = dailyRets.reduce((s, r) => s + r, 0) / dailyRets.length;
+  const variance = dailyRets.reduce((s, r) => s + (r - mean) ** 2, 0) / (dailyRets.length - 1);
+  const annualStd = Math.sqrt(variance * 252);
+
+  return { cagr, mdd, mddDate, endValue: last.nav, startDate: first.date, endDate: last.date, annualStd };
+}
+
+function computeAnnual(navList) {
+  const byYear = {};
+  for (const { date, nav } of navList) byYear[date.slice(0, 4)] = nav;
+  const years = Object.keys(byYear).sort();
+  return years.slice(1).map(y => ({ year: y, ret: byYear[y] / byYear[years[years.indexOf(y)-1]] - 1 }));
+}
+
+// ============================================================
+// Run All
+// ============================================================
+const COLORS = ['#6366f1','#f59e0b','#10b981','#ef4444','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#84cc16'];
+
+function runAll() {
+  try { _runAll(); } catch(e) { alert('執行錯誤：' + e.message + '\n' + e.stack); }
+}
+function _runAll() {
+  if (!state.fxData) { alert('請先載入 data_FX_USDTWD.json'); return; }
+
+  const params = {
+    initTwd:   +document.getElementById('initTwd').value,
+    fxSpread:  +document.getElementById('fxSpread').value,
+    twFee:     +document.getElementById('twFee').value,
+    twSellTax: +document.getElementById('twSellTax').value,
+    usDivTax:  +document.getElementById('usDivTax').value,
+    twDivTax:  +document.getElementById('twDivTax').value,
+    usFee:     +document.getElementById('usFee').value,
+  };
+
+  state.results = {};
+  const errors = [];
+
+  for (const p of state.portfolios) {
+    const valid = p.assets.filter(a => a.ticker && state.tickerData[a.ticker]);
+    const total = valid.reduce((s, a) => s + a.weight, 0);
+    if (valid.length === 0)              { errors.push(`"${p.name}"：尚未選擇任何標的`); continue; }
+    if (Math.abs(total - 100) > 0.01)   { errors.push(`"${p.name}"：比重總和 ${total.toFixed(1)}%，須為 100%`); continue; }
+    const res = runBacktest(valid, params);
+    if (res) state.results[p.name] = res;
+    else errors.push(`"${p.name}"：回測失敗（請確認資料是否完整）`);
+  }
+
+  // Benchmarks
+  if (document.getElementById('benchmarkCheck').checked) {
+    for (const tkr of Object.keys(state.tickerData)) {
+      const label = `100% ${tkr}`;
+      if (!state.results[label]) {
+        const res = runBacktest([{ ticker: tkr, weight: 100 }], params);
+        if (res) state.results[label] = res;
+      }
+    }
+  }
+
+  if (errors.length) alert(errors.join('\n'));
+  if (Object.keys(state.results).length === 0) { alert('沒有可顯示的結果'); return; }
+
+  renderSummary();
+  renderChart();
+  renderAnnual();
+  document.getElementById('results').classList.remove('results-hidden');
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ============================================================
+// Render Results
+// ============================================================
+function renderSummary() {
+  const entries = Object.entries(state.results);
+  const rows = entries.map(([name, res], i) => {
+    const m = computeMetrics(res.navList);
+    if (!m) return '';
+    const dot = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${COLORS[i%COLORS.length]};margin-right:6px;flex-shrink:0"></span>`;
+    return `<tr>
+      <td><div style="display:flex;align-items:center">${dot}${name}</div></td>
+      <td class="${m.cagr >= 0 ? 'positive' : 'negative'}">${fmtPct(m.cagr)}</td>
+      <td>${fmtPct(m.annualStd)}</td>
+      <td class="negative">${fmtPct(m.mdd)}</td>
+      <td>${m.mddDate}</td>
+      <td>${fmtTwd(m.endValue)}</td>
+      <td style="color:#6b7280;font-size:12px">${m.startDate} ~ ${m.endDate}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('summaryTableWrap').innerHTML = `
+    <table class="summary-table">
+      <thead><tr>
+        <th>策略</th><th>年化報酬</th><th>年化標準差</th><th>最大跌幅</th><th>跌幅日</th><th>期末資產（台幣）</th><th>回測期間</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderChart() {
+  const traces = Object.entries(state.results).map(([name, res], i) => ({
+    x: res.navList.map(r => r.date),
+    y: res.navList.map(r => r.nav / 10000),
+    name,
+    type: 'scatter',
+    mode: 'lines',
+    line: { color: COLORS[i % COLORS.length], width: 2 },
+  }));
+  Plotly.newPlot('chart', traces, {
+    yaxis: { title: '資產（萬台幣）', tickformat: ',.0f' },
+    xaxis: { title: '', rangeslider: { visible: true, thickness: 0.06 } },
+    margin: { t: 10, r: 10, b: 60, l: 60 },
+    legend: { orientation: 'h', y: -0.3 },
+    hovermode: 'x unified',
+    plot_bgcolor: '#fff',
+    paper_bgcolor: '#fff',
+    dragmode: 'pan',
+  }, {
+    responsive: true,
+    scrollZoom: true,
+    displayModeBar: true,
+    modeBarButtonsToRemove: ['toImage', 'select2d', 'lasso2d', 'autoScale2d'],
+  });
+}
+
+function renderAnnual() {
+  const names = Object.keys(state.results);
+  const annuals = {};
+  const allYears = new Set();
+  for (const name of names) {
+    annuals[name] = {};
+    for (const { year, ret } of computeAnnual(state.results[name].navList)) {
+      annuals[name][year] = ret;
+      allYears.add(year);
+    }
+  }
+  const years = Array.from(allYears).sort();
+
+  // Detect partial last year
+  const lastDate = names.map(n => { const nl = state.results[n].navList; return nl[nl.length-1].date; }).reduce((a,b) => a>b?a:b);
+  const lastYear = lastDate.slice(0, 4);
+  const isPartial = lastDate.slice(5, 7) !== '12';
+
+  const fmtU = (u, isTw) => isTw ? u.toFixed(2) + ' 股' : u.toFixed(4) + ' 股';
+  const fmtTwdK = v => 'NT$' + Math.round(v).toLocaleString();
+  const fmtUsdK = v => 'US$' + v.toFixed(2);
+
+  const buildTooltip = (name, y) => {
+    const log = state.results[name].rebalLogs[y];
+    if (!log) return '';
+    const lines = [`${log.date} 再平衡與再投入`];
+    for (const it of log.items) {
+      const isTw = isTW(it.ticker);
+      const sign = it.delta >= 0 ? '買入' : '賣出';
+      const absU = Math.abs(it.delta);
+      const priceStr = isTw ? `NT$${it.price.toFixed(2)}` : `US$${it.price.toFixed(2)}`;
+      const amtTwd = isTw ? Math.abs(it.delta) * it.price : Math.abs(it.delta) * it.price * log.fx;
+      lines.push(`${sign} ${it.ticker} ${fmtU(absU, isTw)} @${priceStr} → ${fmtTwdK(amtTwd)}`);
+    }
+    lines.push('─────────────────');
+    const usTwd = log.usUsd * log.fx;
+    lines.push(`總資產 ${fmtTwdK(log.total)}`);
+    if (log.twTwd > 0 && usTwd > 0) {
+      lines.push(`= 台股 ${fmtTwdK(log.twTwd)}`);
+      lines.push(`+ 美股 ${fmtUsdK(log.usUsd)} × ${log.fx.toFixed(2)} = ${fmtTwdK(usTwd)}`);
+    } else if (log.twTwd > 0) {
+      lines.push(`= 台股 ${fmtTwdK(log.twTwd)}`);
+    } else {
+      lines.push(`= 美股 ${fmtUsdK(log.usUsd)} × ${log.fx.toFixed(2)} = ${fmtTwdK(usTwd)}`);
+    }
+    return lines.join('\n');
+  };
+
+  const header = `<tr><th>年度</th>${names.map(n => `<th>${n}</th>`).join('')}</tr>`;
+  const bodyRows = years.map(y => {
+    const label = (isPartial && y === lastYear) ? `${y} YTD` : y;
+    const cells = names.map(n => {
+      const v = annuals[n][y];
+      if (v === undefined) return '<td style="color:#d1d5db">—</td>';
+      const pct = (v * 100).toFixed(1);
+      const intensity = Math.min(Math.abs(v) / 0.4, 1);
+      const bg = v > 0 ? `rgba(22,163,74,${intensity * 0.22})` : `rgba(220,38,38,${intensity * 0.22})`;
+      const cls = v >= 0 ? 'positive' : 'negative';
+      const tip = buildTooltip(n, y);
+      const tipAttr = tip ? ` data-tip="${tip.replace(/"/g, '&quot;')}"` : '';
+      return `<td style="background:${bg}" class="${cls}${tip ? ' has-tip' : ''}"${tipAttr}>${v >= 0 ? '+' : ''}${pct}%</td>`;
+    }).join('');
+    return `<tr><td>${label}</td>${cells}</tr>`;
+  }).join('');
+
+  document.getElementById('annualTableWrap').innerHTML = `
+    <table class="annual-table">
+      <thead>${header}</thead>
+      <tbody>${bodyRows}</tbody>
+    </table>`;
+}
+
+// ============================================================
+// Event Wiring
+// ============================================================
+const dropZone  = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length > 0) {
+    handleFiles(e.dataTransfer.files);
+  } else {
+    const urlList = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+    if (urlList) handleUrls(urlList.split('\n'));
+  }
+});
+
+document.getElementById('addPortfolioBtn').addEventListener('click', addPortfolio);
+document.getElementById('runBtn').addEventListener('click', runAll);
+
+let settingsOpen = true;
+document.getElementById('settingsToggle').addEventListener('click', () => {
+  settingsOpen = !settingsOpen;
+  document.getElementById('settingsBody').style.display = settingsOpen ? '' : 'none';
+  document.getElementById('settingsToggle').textContent = settingsOpen ? '▲ 收合' : '▼ 展開';
+});
+
+
+// Init
+addPortfolio();
+
+// Rebalance tooltip
+const rebalTooltip = document.getElementById('rebalTooltip');
+document.addEventListener('mouseover', e => {
+  const td = e.target.closest('td.has-tip');
+  if (!td) return;
+  rebalTooltip.textContent = td.dataset.tip;
+  rebalTooltip.style.display = 'block';
+});
+document.addEventListener('mousemove', e => {
+  if (rebalTooltip.style.display === 'none') return;
+  const x = e.clientX + 16, y = e.clientY + 12;
+  const w = rebalTooltip.offsetWidth, h = rebalTooltip.offsetHeight;
+  rebalTooltip.style.left = (x + w > window.innerWidth  ? e.clientX - w - 8 : x) + 'px';
+  rebalTooltip.style.top  = (y + h > window.innerHeight ? e.clientY - h - 8 : y) + 'px';
+});
+document.addEventListener('mouseout', e => {
+  if (!e.target.closest('td.has-tip')) rebalTooltip.style.display = 'none';
+});
+</script>
+</body>
+</html>
