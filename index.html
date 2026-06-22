@@ -80,8 +80,15 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
 .annual-table td:first-child { text-align: left; color: #6b7280; font-weight: 600; }
 .annual-table td.has-tip { cursor: default; }
 .annual-table td.has-tip:hover { outline: 2px solid #6366f1; outline-offset: -2px; }
-#rebalTooltip { position: fixed; background: #1e293b; color: #f1f5f9; font-size: 12px; line-height: 1.6; padding: 10px 14px; border-radius: 8px; white-space: pre; pointer-events: none; z-index: 9999; display: none; box-shadow: 0 4px 16px rgba(0,0,0,.3); max-width: 340px; }
+#rebalTooltip { position: fixed; background: #1e293b; color: #f1f5f9; font-size: 12px; line-height: 1.6; padding: 10px 14px; border-radius: 8px; white-space: pre-wrap; pointer-events: none; z-index: 9999; display: none; box-shadow: 0 4px 16px rgba(0,0,0,.3); max-width: 420px; }
 .bottom-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.mc-success-rate { font-size: 20px; font-weight: 700; }
+.mc-corr-table { border-collapse: collapse; font-size: 11px; }
+.mc-corr-table th, .mc-corr-table td { padding: 5px 8px; border: 1px solid #e5e7eb; min-width: 52px; }
+.mc-corr-table th { background: #f3f4f6; font-weight: 600; color: #6b7280; text-align: left; white-space: nowrap; }
+.mc-corr-table td { text-align: center; }
+.mc-warn-tip { background: #fffbeb !important; cursor: default; }
+.mc-warn-tip:hover { outline: 2px solid #d97706; outline-offset: -2px; }
 </style>
 </head>
 <body>
@@ -94,7 +101,7 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
   <div class="card">
     <div class="card-title"><span class="step-badge">1</span>載入資料檔</div>
     <div class="drop-zone" id="dropZone">
-      <input type="file" id="fileInput" multiple accept=".json">
+      <input type="file" id="fileInput" multiple accept=".json" style="display:none">
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
           d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
@@ -158,10 +165,43 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
           <input type="number" id="usFee" value="0.001" step="0.0001">
         </div>
       </div>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0 14px">
+      <p style="font-size:12px;font-weight:600;color:#374151;margin-bottom:10px">蒙地卡羅退休模擬參數</p>
+      <div class="settings-grid">
+        <div class="setting-row">
+          <label>退休總年限</label>
+          <input type="number" id="mcYears" value="45" min="1">
+        </div>
+        <div class="setting-row">
+          <label>模擬次數</label>
+          <input type="number" id="mcSims" value="10000" min="100">
+        </div>
+        <div class="setting-row">
+          <label>退休首年每月提領（台幣）</label>
+          <input type="number" id="mcMonthly" value="80000" min="0">
+        </div>
+        <div class="setting-row">
+          <label>通膨均值（%）</label>
+          <input type="number" id="mcInflMean" value="2.5" step="0.1">
+        </div>
+        <div class="setting-row">
+          <label>通膨標準差（%）</label>
+          <input type="number" id="mcInflStd" value="1.5" step="0.1">
+        </div>
+      </div>
     </div>
   </div>
 
   <button class="btn btn-primary btn-run" id="runBtn">執行回測</button>
+  <button class="btn btn-secondary btn-run" style="margin-top:8px" id="mcBtn">執行退休模擬</button>
+  <div id="mcProgress" style="display:none;margin-top:10px">
+    <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:#6b7280">
+      <div style="flex:1;background:#e5e7eb;border-radius:4px;height:8px;overflow:hidden">
+        <div id="mcProgressBar" style="height:100%;background:#6366f1;width:0%;transition:width .08s linear"></div>
+      </div>
+      <span id="mcProgressText" style="white-space:nowrap;min-width:120px;text-align:right"></span>
+    </div>
+  </div>
 
   <!-- Results -->
   <div id="results" class="results-hidden">
@@ -170,12 +210,20 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
       <div style="overflow-x:auto"><div id="summaryTableWrap"></div></div>
     </div>
     <div class="card">
-      <div class="card-title">淨值走勢（期初＝1，台幣計價）</div>
+      <div class="card-title">淨值走勢（台幣計價）</div>
       <div id="chart" style="height:420px"></div>
     </div>
     <div class="card">
       <div class="card-title">各年度報酬率</div>
       <div class="annual-wrap"><div id="annualTableWrap"></div></div>
+    </div>
+    <div class="card results-hidden" id="mcCard">
+      <div class="card-title">蒙地卡羅退休模擬</div>
+      <div id="mcTableWrap" style="overflow-x:auto;margin-bottom:20px"></div>
+      <div class="card-title" style="font-size:13px;margin-top:4px">殘值分佈（成功情境，單位：萬台幣）</div>
+      <div id="mcChart" style="height:320px;margin-bottom:20px"></div>
+      <div class="card-title" style="font-size:13px">相關係數矩陣與歷史年化統計</div>
+      <div id="mcCorrWrap"></div>
     </div>
   </div>
 </div>
@@ -189,6 +237,7 @@ const state = {
   fxData: null,    // {pair, data:[{date,rate}]}
   portfolios: [],
   results: {},
+  mcResults: {},
 };
 let pidCounter = 0;
 
@@ -361,6 +410,9 @@ function runBacktest(assets, params) {
   const weights = {};
   assets.forEach(a => weights[a.ticker] = a.weight / 100);
 
+  const hasUS = tickers.some(t => !isTW(t));
+  if (hasUS && !state.fxData) return null;  // 含美股但無匯率資料
+
   // Pre-build sorted arrays and div maps
   const tkrDates = {}, tkrCloses = {}, tkrDivMaps = {};
   for (const tkr of tickers) {
@@ -369,18 +421,17 @@ function runBacktest(assets, params) {
     tkrCloses[tkr] = rows.map(r => r.close);
     tkrDivMaps[tkr] = new Map(rows.filter(r => r.div > 0).map(r => [r.date, r.div]));
   }
-  const fxDates = state.fxData.data.map(r => r.date);
-  const fxRates = state.fxData.data.map(r => r.rate);
+  const fxDates = state.fxData ? state.fxData.data.map(r => r.date) : [];
+  const fxRates = state.fxData ? state.fxData.data.map(r => r.rate) : [];
 
   // Union of ticker trading dates only（FX 只做 ffill 查詢，不加入日期軸）
   const dateSet = new Set();
   for (const tkr of tickers) tkrDates[tkr].forEach(d => dateSet.add(d));
 
-  // Common start = max of all first dates
-  const commonStart = tickers
-    .map(tkr => tkrDates[tkr][0])
-    .concat(fxDates[0])
-    .reduce((a, b) => a > b ? a : b);
+  // Common start = max of all first dates（只有含美股才納入 FX 起始日）
+  const firstDates = tickers.map(tkr => tkrDates[tkr][0]);
+  if (hasUS && fxDates.length > 0) firstDates.push(fxDates[0]);
+  const commonStart = firstDates.reduce((a, b) => a > b ? a : b);
 
   const allDates = Array.from(dateSet).filter(d => d >= commonStart).sort();
   if (allDates.length === 0) return null;
@@ -391,6 +442,7 @@ function runBacktest(assets, params) {
     return i >= 0 ? tkrCloses[tkr][i] : null;
   };
   const getFx = date => {
+    if (!fxDates.length) return 1;  // 純台股：匯率固定為 1
     const i = bisectLE(fxDates, date);
     return i >= 0 ? fxRates[i] : null;
   };
@@ -408,7 +460,7 @@ function runBacktest(assets, params) {
   const units = {};
   for (const a of assets) {
     const t = a.ticker, p0 = getClose(t, allDates[0]);
-    if (!p0 || !fx0) return null;
+    if (!p0 || fx0 === null) return null;
     const allocTwd = initTwd * weights[t];
     units[t] = isTW(t)
       ? allocTwd / (p0 * (1 + twFee))
@@ -422,7 +474,7 @@ function runBacktest(assets, params) {
 
   for (const date of allDates) {
     const fx = getFx(date);
-    if (!fx) continue;
+    if (fx === null) continue;
 
     // Cache prices for this date
     const prices = {};
@@ -568,7 +620,7 @@ function runAll() {
   try { _runAll(); } catch(e) { alert('執行錯誤：' + e.message + '\n' + e.stack); }
 }
 function _runAll() {
-  if (!state.fxData) { alert('請先載入 data_FX_USDTWD.json'); return; }
+  if (Object.keys(state.tickerData).length === 0) { alert('請先載入資料檔'); return; }
 
   const params = {
     initTwd:   +document.getElementById('initTwd').value,
@@ -581,6 +633,8 @@ function _runAll() {
   };
 
   state.results = {};
+  state.mcResults = {};
+  document.getElementById('mcCard').classList.add('results-hidden');
   const errors = [];
 
   for (const p of state.portfolios) {
@@ -590,8 +644,8 @@ function _runAll() {
     if (new Set(valid.map(a => a.ticker)).size !== valid.length) { errors.push(`"${p.name}"：包含重複的標的，請合併後再執行`); continue; }
     if (Math.abs(total - 100) > 0.01)   { errors.push(`"${p.name}"：比重總和 ${total.toFixed(1)}%，須為 100%`); continue; }
     const res = runBacktest(valid, params);
-    if (res) state.results[p.name] = res;
-    else errors.push(`"${p.name}"：回測失敗（請確認資料是否完整）`);
+    if (res) state.results[p.name] = { ...res, assets: valid };
+    else errors.push(`"${p.name}"：回測失敗（若含美股，請確認已載入 data_FX_USDTWD.json）`);
   }
 
   // Benchmarks
@@ -600,7 +654,7 @@ function _runAll() {
       const label = `100% ${tkr}`;
       if (!state.results[label]) {
         const res = runBacktest([{ ticker: tkr, weight: 100 }], params);
-        if (res) state.results[label] = res;
+        if (res) state.results[label] = { ...res, assets: [{ ticker: tkr, weight: 100 }] };
       }
     }
   }
@@ -655,8 +709,8 @@ function renderChart() {
   Plotly.newPlot('chart', traces, {
     yaxis: { title: '資產（萬台幣）', tickformat: ',.0f' },
     xaxis: { title: '', rangeslider: { visible: true, thickness: 0.06 } },
-    margin: { t: 10, r: 10, b: 60, l: 60 },
-    legend: { orientation: 'h', y: -0.3 },
+    margin: { t: 10, r: 160, b: 40, l: 60 },
+    legend: { orientation: 'v', x: 1.02, y: 1, xanchor: 'left', yanchor: 'top', font: { size: 11 } },
     hovermode: 'x unified',
     plot_bgcolor: '#fff',
     paper_bgcolor: '#fff',
@@ -763,6 +817,7 @@ dropZone.addEventListener('drop', e => {
 
 document.getElementById('addPortfolioBtn').addEventListener('click', addPortfolio);
 document.getElementById('runBtn').addEventListener('click', runAll);
+document.getElementById('mcBtn').addEventListener('click', runMC);
 
 let settingsOpen = true;
 document.getElementById('settingsToggle').addEventListener('click', () => {
@@ -771,6 +826,367 @@ document.getElementById('settingsToggle').addEventListener('click', () => {
   document.getElementById('settingsToggle').textContent = settingsOpen ? '▲ 收合' : '▼ 展開';
 });
 
+
+// ============================================================
+// Monte Carlo Retirement Simulation
+// ============================================================
+
+function randNorm(mean, std) {
+  const u1 = Math.random() || 1e-300, u2 = Math.random();
+  return mean + std * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+function cholesky(A) {
+  const n = A.length;
+  const L = Array.from({length: n}, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      let s = A[i][j];
+      for (let k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+      L[i][j] = i === j ? Math.sqrt(Math.max(s, 1e-12)) : s / (L[j][j] || 1e-12);
+    }
+  }
+  return L;
+}
+
+function mvnSample(means, L) {
+  const n = means.length;
+  const z = Array.from({length: n}, () => randNorm(0, 1));
+  return means.map((m, i) => m + L[i].reduce((s, l, k) => s + l * z[k], 0));
+}
+
+function computeTickerAnnualReturns(tkr) {
+  const rows = state.tickerData[tkr].data;
+  if (!rows || rows.length < 2) return { returns: {}, partialYear: null };
+  let prevClose = rows[0].close, tri = 1.0;
+  const endTRI = { [rows[0].date.slice(0, 4)]: 1.0 };
+  for (let i = 1; i < rows.length; i++) {
+    const { date, close, div } = rows[i];
+    tri *= (close + div) / prevClose;
+    prevClose = close;
+    endTRI[date.slice(0, 4)] = tri;
+  }
+  const years = Object.keys(endTRI).sort();
+  const result = {};
+  for (let i = 1; i < years.length; i++) result[years[i]] = endTRI[years[i]] / endTRI[years[i-1]] - 1;
+  const lastDate = rows[rows.length - 1].date;
+  const lastMonth = +lastDate.slice(5, 7);
+  const partialYear = lastMonth < 12 ? lastDate.slice(0, 4) : null;
+  if (partialYear) delete result[partialYear];
+  return { returns: result, partialYear };
+}
+
+function computeFxAnnualReturns() {
+  const rows = state.fxData.data;
+  const endRate = {};
+  for (const { date, rate } of rows) endRate[date.slice(0, 4)] = rate;
+  const years = Object.keys(endRate).sort();
+  const result = {};
+  for (let i = 1; i < years.length; i++) result[years[i]] = endRate[years[i]] / endRate[years[i-1]] - 1;
+  const lastDate = rows[rows.length - 1].date;
+  const lastMonth = +lastDate.slice(5, 7);
+  const partialYear = lastMonth < 12 ? lastDate.slice(0, 4) : null;
+  if (partialYear) delete result[partialYear];
+  return { returns: result, partialYear };
+}
+
+async function runMonteCarloSim(assets, mcParams, onProgress) {
+  const initTwd = +document.getElementById('initTwd').value;
+  const { retirementYears, simCount, monthlyWithdrawal, inflMean, inflStd } = mcParams;
+  const baseAnnualExpense = monthlyWithdrawal * 12;
+
+  const tickers = assets.map(a => a.ticker);
+  const weights = {};
+  assets.forEach(a => weights[a.ticker] = a.weight / 100);
+
+  const hasUS = tickers.some(t => !isTW(t));
+
+  // Historical annual returns per variable (partial year auto-excluded)
+  const annRets = {};
+  let partialYearExcluded = null;
+  for (const tkr of tickers) {
+    const r = computeTickerAnnualReturns(tkr);
+    annRets[tkr] = r.returns;
+    if (r.partialYear) partialYearExcluded = r.partialYear;
+  }
+  if (hasUS) {
+    const r = computeFxAnnualReturns();
+    annRets['_FX'] = r.returns;
+    if (r.partialYear) partialYearExcluded = r.partialYear;
+  }
+
+  const varNames = [...tickers, ...(hasUS ? ['_FX'] : [])];
+
+  // Common years across all variables
+  const yearSets = varNames.map(v => new Set(Object.keys(annRets[v])));
+  const commonYears = [...yearSets[0]].filter(y => yearSets.every(s => s.has(y))).sort();
+  if (commonYears.length < 3) return null;
+
+  // Build warnings
+  const warnings = [];
+  if (partialYearExcluded) {
+    warnings.push({ type: 'info', msg: `${partialYearExcluded} 年資料未完整（非 12 月結尾），已自動排除，不納入歷史分布計算` });
+  }
+  const nObs = commonYears.length;
+  if (nObs < 15) {
+    let limitingTkr = null, latestFirstYear = null;
+    for (const v of varNames) {
+      if (v === '_FX') continue;
+      const firstYear = Object.keys(annRets[v]).sort()[0];
+      if (!latestFirstYear || firstYear > latestFirstYear) { latestFirstYear = firstYear; limitingTkr = v; }
+    }
+    const limitMsg = limitingTkr ? `，受 ${limitingTkr} 上市時間限制` : '';
+    warnings.push({ type: 'warn', msg: `共同歷史年份僅 ${nObs} 年（${commonYears[0]}～${commonYears[nObs-1]}）${limitMsg}，樣本可能偏向特定市況，存活率請謹慎參考` });
+  }
+
+  // Data matrix [nObs x nVars]
+  const dataMatrix = commonYears.map(y => varNames.map(v => annRets[v][y]));
+  const nVars = varNames.length;
+
+  // Mean vector
+  const means = Array.from({length: nVars}, (_, j) =>
+    dataMatrix.reduce((s, r) => s + r[j], 0) / nObs
+  );
+
+  // Covariance matrix
+  const cov = Array.from({length: nVars}, () => new Array(nVars).fill(0));
+  for (let i = 0; i < nVars; i++) {
+    for (let j = 0; j <= i; j++) {
+      let sum = 0;
+      for (const row of dataMatrix) sum += (row[i] - means[i]) * (row[j] - means[j]);
+      cov[i][j] = cov[j][i] = sum / (nObs - 1);
+    }
+  }
+
+  // Stds and correlation matrix (for display)
+  const stds = cov.map((_, i) => Math.sqrt(cov[i][i]));
+  const corr = cov.map((row, i) => row.map((v, j) => v / (stds[i] * stds[j] || 1)));
+
+  const L = cholesky(cov);
+  const fxIdx = hasUS ? varNames.indexOf('_FX') : -1;
+  const tickerVarIdx = tickers.map(tkr => varNames.indexOf(tkr));
+  const tickerIsTW = tickers.map(tkr => isTW(tkr));
+
+  const BATCH = 1000;
+  let successCount = 0;
+  const residuals = [];
+  let batchCount = 0;
+
+  for (let sim = 0; sim < simCount; sim++) {
+    let W = initTwd;
+    let currentExpense = baseAnnualExpense;
+    let bankrupt = false;
+
+    for (let year = 0; year < retirementYears; year++) {
+      // Step 1: withdraw & check bankruptcy
+      W -= currentExpense;
+      if (W <= 0) { bankrupt = true; break; }
+
+      // Step 2: random variables
+      const r_infl = randNorm(inflMean, inflStd);
+      currentExpense *= (1 + r_infl);
+
+      const sample = mvnSample(means, L);
+
+      // Step 3: portfolio return in TWD
+      let r_port = 0;
+      for (let ti = 0; ti < tickers.length; ti++) {
+        const tkr = tickers[ti];
+        const r_local = sample[tickerVarIdx[ti]];
+        const r_twd = tickerIsTW[ti] ? r_local : (1 + r_local) * (1 + sample[fxIdx]) - 1;
+        r_port += weights[tkr] * r_twd;
+      }
+      W *= (1 + r_port);
+    }
+
+    if (!bankrupt) { successCount++; residuals.push(W); }
+
+    if (++batchCount >= BATCH) {
+      onProgress && onProgress(batchCount);
+      batchCount = 0;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  if (batchCount > 0) onProgress && onProgress(batchCount);
+
+  return { successRate: successCount / simCount, residuals, means, stds, corr, varNames, commonYears, nObs, warnings };
+}
+
+async function runMC() {
+  try { await _runMC(); } catch(e) {
+    document.getElementById('mcProgress').style.display = 'none';
+    document.getElementById('mcBtn').disabled = false;
+    alert('模擬錯誤：' + e.message + '\n' + e.stack);
+  }
+}
+async function _runMC() {
+  if (Object.keys(state.tickerData).length === 0) { alert('請先載入資料'); return; }
+  if (Object.keys(state.results).length === 0) {
+    _runAll();
+    if (Object.keys(state.results).length === 0) return;
+  }
+
+  const mcParams = {
+    retirementYears:   +document.getElementById('mcYears').value,
+    simCount:          +document.getElementById('mcSims').value,
+    monthlyWithdrawal: +document.getElementById('mcMonthly').value,
+    inflMean:          +document.getElementById('mcInflMean').value / 100,
+    inflStd:           +document.getElementById('mcInflStd').value / 100,
+  };
+
+  const entries = Object.entries(state.results);
+  const simCount = mcParams.simCount;
+  const total = entries.length * simCount;
+  let done = 0;
+  let stratIdx = 0;
+
+  const progressEl  = document.getElementById('mcProgress');
+  const barEl       = document.getElementById('mcProgressBar');
+  const textEl      = document.getElementById('mcProgressText');
+  const btnEl       = document.getElementById('mcBtn');
+  progressEl.style.display = '';
+  barEl.style.width = '0%';
+  textEl.textContent = `策略 1/${entries.length}：0 / ${simCount.toLocaleString()} 次`;
+  btnEl.disabled = true;
+
+  state.mcResults = {};
+  for (const [name, res] of entries) {
+    stratIdx++;
+    let stratDone = 0;
+    const onProgress = n => {
+      done += n;
+      stratDone += n;
+      barEl.style.width = (done / total * 100).toFixed(1) + '%';
+      textEl.textContent = `策略 ${stratIdx}/${entries.length}：${stratDone.toLocaleString()} / ${simCount.toLocaleString()} 次`;
+    };
+    state.mcResults[name] = await runMonteCarloSim(res.assets, mcParams, onProgress);
+  }
+
+  progressEl.style.display = 'none';
+  btnEl.disabled = false;
+
+  renderMCResults();
+  document.getElementById('mcCard').classList.remove('results-hidden');
+  document.getElementById('mcCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderMCResults() {
+  const entries = Object.entries(state.mcResults);
+  const fmtWan = v => v == null ? '—' : Math.round(v / 10000).toLocaleString() + ' 萬';
+
+  const pct = (arr, q) => {
+    if (!arr || !arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    return s[Math.min(Math.floor(q * s.length), s.length - 1)];
+  };
+
+  // Summary table
+  const rows = entries.map(([name, r], i) => {
+    if (!r) return `<tr><td colspan="7" style="color:#9ca3af;padding:8px 12px">${name}：資料不足（至少需 3 年歷史資料）</td></tr>`;
+    const dot = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${COLORS[i%COLORS.length]};margin-right:6px"></span>`;
+    const sr = r.successRate;
+    const srColor = sr >= 0.9 ? '#16a34a' : sr >= 0.7 ? '#d97706' : '#dc2626';
+    const s = r.residuals;
+    const warnMsgs = r.warnings ? r.warnings.filter(w => w.type === 'warn').map(w => w.msg) : [];
+    const warnTd = warnMsgs.length > 0
+      ? ` class="has-tip mc-warn-tip" data-tip="${warnMsgs.join('\n').replace(/"/g, '&quot;')}"`
+      : '';
+    const warnIcon = warnMsgs.length > 0 ? ' <span style="font-size:12px;color:#d97706">⚠</span>' : '';
+    return `<tr>
+      <td><div style="display:flex;align-items:center">${dot}${name}</div></td>
+      <td${warnTd}><span class="mc-success-rate" style="color:${srColor}">${(sr*100).toFixed(1)}%</span>${warnIcon}</td>
+      <td>${fmtWan(pct(s, 0.05))}</td>
+      <td>${fmtWan(pct(s, 0.25))}</td>
+      <td>${fmtWan(pct(s, 0.50))}</td>
+      <td>${fmtWan(pct(s, 0.75))}</td>
+      <td>${fmtWan(pct(s, 0.95))}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('mcTableWrap').innerHTML = `
+    <table class="summary-table">
+      <thead><tr>
+        <th>策略</th><th>退休成功率</th><th>殘值 P5</th><th>殘值 P25</th><th>殘值 P50（中位數）</th><th>殘值 P75</th><th>殘值 P95</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  // Box plot of residuals
+  const traces = entries
+    .filter(([, r]) => r && r.residuals.length > 0)
+    .map(([name, r], i) => ({
+      y: r.residuals.map(v => v / 10000),
+      name,
+      type: 'box',
+      marker: { color: COLORS[i % COLORS.length] },
+      boxpoints: false,
+    }));
+
+  if (traces.length) {
+    const allRes = traces.flatMap(t => t.y);
+    const maxVal = allRes.reduce((a, b) => a > b ? a : b, -Infinity);
+    const minPos = allRes.reduce((a, b) => (b > 0 && b < a) ? b : a, Infinity);
+    const useLog = allRes.length > 0 && maxVal / Math.max(minPos === Infinity ? 1 : minPos, 1) > 100;
+    Plotly.newPlot('mcChart', traces, {
+      yaxis: { title: '殘值（萬台幣）', type: useLog ? 'log' : 'linear', tickformat: useLog ? '' : ',.0f', zeroline: !useLog },
+      margin: { t: 10, r: 20, b: 80, l: 80 },
+      plot_bgcolor: '#fff', paper_bgcolor: '#fff',
+    }, { responsive: true });
+  } else {
+    document.getElementById('mcChart').innerHTML =
+      '<p style="text-align:center;color:#9ca3af;padding:60px 0">所有模擬均破產，無殘值資料</p>';
+  }
+
+  // Correlation matrices
+  let corrHtml = '';
+  for (const [name, r] of entries) {
+    if (!r) continue;
+    const labels = r.varNames.map(v => v === '_FX' ? 'USD/TWD' : v);
+    const period = `${r.commonYears[0]}~${r.commonYears[r.commonYears.length-1]}，${r.nObs} 年`;
+
+    const warnHtml = (r.warnings && r.warnings.length > 0) ? r.warnings.map(w => {
+      const [color, bg, border] = w.type === 'warn'
+        ? ['#92400e', '#fffbeb', '#fde68a']
+        : ['#374151', '#f3f4f6', '#e5e7eb'];
+      return `<div style="font-size:11px;color:${color};background:${bg};border:1px solid ${border};border-radius:4px;padding:5px 8px;margin-bottom:4px">${w.type === 'warn' ? '⚠ ' : 'ℹ '}${w.msg}</div>`;
+    }).join('') : '';
+
+    if (r.varNames.length < 2) {
+      corrHtml += `<div style="margin-bottom:12px">
+        <p style="font-size:12px;font-weight:600;color:#374151">${name}（${period}）</p>
+        ${warnHtml}
+        <p style="font-size:12px;color:#6b7280">${labels[0]}：年化均值 ${(r.means[0]*100).toFixed(1)}%，標準差 ${(r.stds[0]*100).toFixed(1)}%</p>
+      </div>`;
+      continue;
+    }
+
+    const headerCells = labels.map(l => `<th style="text-align:center">${l}</th>`).join('');
+    const bodyRows = r.corr.map((row, i) => {
+      const cells = row.map((v, j) => {
+        if (i === j) return `<td style="background:#f3f4f6;color:#9ca3af">—</td>`;
+        const abs = Math.abs(v);
+        const bg = v > 0 ? `rgba(99,102,241,${abs*0.55})` : `rgba(239,68,68,${abs*0.55})`;
+        return `<td style="background:${bg}">${v.toFixed(2)}</td>`;
+      }).join('');
+      return `<tr>
+        <th>${labels[i]}<br><span style="font-weight:400;color:#6b7280">${(r.means[i]*100).toFixed(1)}% ± ${(r.stds[i]*100).toFixed(1)}%</span></th>
+        ${cells}
+      </tr>`;
+    }).join('');
+
+    corrHtml += `<div style="margin-bottom:20px">
+      <p style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px">${name}（${period}）</p>
+      ${warnHtml}
+      <div style="overflow-x:auto">
+        <table class="mc-corr-table">
+          <thead><tr><th>資產（年化均值 ± 標準差）</th>${headerCells}</tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+  document.getElementById('mcCorrWrap').innerHTML = corrHtml || '<p style="color:#9ca3af;font-size:12px">無資料</p>';
+}
 
 // Init
 addPortfolio();
