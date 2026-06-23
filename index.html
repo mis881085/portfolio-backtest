@@ -89,6 +89,8 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
 .mc-corr-table td { text-align: center; }
 .mc-warn-tip { background: #fffbeb !important; cursor: default; }
 .mc-warn-tip:hover { outline: 2px solid #d97706; outline-offset: -2px; }
+.hist-row-down { background: #fff1f1; }
+.hist-row-up   { background: #f0fdf4; }
 </style>
 </head>
 <body>
@@ -193,7 +195,15 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
   </div>
 
   <button class="btn btn-primary btn-run" id="runBtn">執行回測</button>
-  <button class="btn btn-secondary btn-run" style="margin-top:8px" id="mcBtn">執行退休模擬</button>
+  <button class="btn btn-secondary btn-run" style="margin-top:8px" id="mcBtn">執行退休模擬（蒙地卡羅）</button>
+  <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <label style="font-size:11px;color:#6b7280;white-space:nowrap">退休起始年</label>
+      <input type="number" id="histStartYear" value="2007" min="2000" max="2035" step="1"
+             style="width:80px;padding:9px 8px;border-radius:8px;border:1px solid #d1d5db;font-size:14px;text-align:center">
+    </div>
+    <button class="btn btn-secondary btn-run" style="flex:1;margin-top:0" id="histBtn">執行歷史情境模擬（真實數據）</button>
+  </div>
   <div id="mcProgress" style="display:none;margin-top:10px">
     <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:#6b7280">
       <div style="flex:1;background:#e5e7eb;border-radius:4px;height:8px;overflow:hidden">
@@ -217,6 +227,11 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
       <div class="card-title">各年度報酬率</div>
       <div class="annual-wrap"><div id="annualTableWrap"></div></div>
     </div>
+    <div class="card results-hidden" id="histCard">
+      <div class="card-title">歷史退休情境（真實報酬）</div>
+      <p style="font-size:12px;color:#6b7280;margin-bottom:12px">依載入的歷史真實報酬模擬：<strong>年初提領 → 剩餘資金投資一整年 → 年末再平衡至目標比重</strong>。通膨按設定均值逐年調升提領額。不含換匯價差、手續費等交易成本。</p>
+      <div id="histContent"></div>
+    </div>
     <div class="card results-hidden" id="mcCard">
       <div class="card-title">蒙地卡羅退休模擬</div>
       <div id="mcTableWrap" style="overflow-x:auto;margin-bottom:20px"></div>
@@ -238,6 +253,7 @@ const state = {
   portfolios: [],
   results: {},
   mcResults: {},
+  histResults: {},
 };
 let pidCounter = 0;
 
@@ -442,7 +458,7 @@ function runBacktest(assets, params) {
     return i >= 0 ? tkrCloses[tkr][i] : null;
   };
   const getFx = date => {
-    if (!fxDates.length) return 1;  // 純台股：匯率固定為 1
+    if (!hasUS || !fxDates.length) return 1;  // 純台股：匯率固定為 1
     const i = bisectLE(fxDates, date);
     return i >= 0 ? fxRates[i] : null;
   };
@@ -634,7 +650,9 @@ function _runAll() {
 
   state.results = {};
   state.mcResults = {};
+  state.histResults = {};
   document.getElementById('mcCard').classList.add('results-hidden');
+  document.getElementById('histCard').classList.add('results-hidden');
   const errors = [];
 
   for (const p of state.portfolios) {
@@ -928,6 +946,9 @@ async function runMonteCarloSim(assets, mcParams, onProgress) {
     warnings.push({ type: 'info', msg: `${partialYearExcluded} 年資料未完整（非 12 月結尾），已自動排除，不納入歷史分布計算` });
   }
   const nObs = commonYears.length;
+  if (!commonYears.includes('2008')) {
+    warnings.push({ type: 'warn', msg: `共同歷史年份不含 2008 年金融海嘯（最早至 ${commonYears[0]} 年），模型未見過該極端市況，尾部風險可能低估，存活率偏樂觀` });
+  }
   if (nObs < 15) {
     let limitingTkr = null, latestFirstYear = null;
     for (const v of varNames) {
@@ -1187,6 +1208,183 @@ function renderMCResults() {
   }
   document.getElementById('mcCorrWrap').innerHTML = corrHtml || '<p style="color:#9ca3af;font-size:12px">無資料</p>';
 }
+
+// ============================================================
+// Historical retirement simulation
+// ============================================================
+function computeHistoricalRetirement(assets, startYear, initTwd, monthlyWithdrawal, inflMean, retirementYears) {
+  const tickers = assets.map(a => a.ticker);
+  const weights = {};
+  assets.forEach(a => weights[a.ticker] = a.weight / 100);
+  const hasUS = tickers.some(t => !isTW(t));
+
+  for (const tkr of tickers) {
+    if (!state.tickerData[tkr]) return { cantSim: true, msg: `${tkr} 資料未載入` };
+  }
+  if (hasUS && !state.fxData) return { cantSim: true, msg: '未載入 FX 匯率資料' };
+
+  // Coverage check: every ticker and FX must have data starting in or before startYear
+  for (const tkr of tickers) {
+    const firstYear = +state.tickerData[tkr].data[0].date.slice(0, 4);
+    if (firstYear > startYear) {
+      return { cantSim: true, msg: `${tkr} 最早資料為 ${firstYear} 年，無法模擬 ${startYear} 年退休情境` };
+    }
+  }
+  if (hasUS && state.fxData) {
+    const fxFirst = +state.fxData.data[0].date.slice(0, 4);
+    if (fxFirst > startYear) {
+      return { cantSim: true, msg: `匯率資料最早至 ${fxFirst} 年，無法模擬 ${startYear} 年退休情境` };
+    }
+  }
+
+  const annRets = {};
+  for (const tkr of tickers) annRets[tkr] = computeTickerAnnualReturns(tkr).returns;
+  if (hasUS) annRets['_FX'] = computeFxAnnualReturns().returns;
+
+  let years = Object.keys(annRets[tickers[0]]).filter(y => +y >= startYear);
+  for (const tkr of tickers.slice(1)) years = years.filter(y => annRets[tkr][y] !== undefined);
+  if (hasUS) years = years.filter(y => annRets['_FX'][y] !== undefined);
+  years.sort();
+
+  if (!years.length) {
+    return { cantSim: true, msg: `${startYear} 年後無共同歷史年份，請重新執行 export_data.py 下載更早資料` };
+  }
+
+  const rows = [];
+  let W = initTwd;
+  let expense = monthlyWithdrawal * 12;
+
+  for (let i = 0; i < Math.min(years.length, retirementYears); i++) {
+    const year = +years[i];
+    const withdrawal = expense;
+    const startW = W;
+    W -= withdrawal;
+
+    if (W <= 0) {
+      rows.push({ year, startW, withdrawal, rebalDetails: [], portReturn: null, endW: 0, bankrupt: true });
+      break;
+    }
+
+    const tkrRets = {};
+    for (const tkr of tickers) {
+      const r = annRets[tkr][String(year)];
+      tkrRets[tkr] = hasUS && !isTW(tkr) ? (1 + r) * (1 + annRets['_FX'][String(year)]) - 1 : r;
+    }
+
+    const portReturn = tickers.reduce((s, tkr) => s + weights[tkr] * tkrRets[tkr], 0);
+    const before = Object.fromEntries(tickers.map(tkr => [tkr, W * weights[tkr] * (1 + tkrRets[tkr])]));
+    const endW = W * (1 + portReturn);
+    const after = Object.fromEntries(tickers.map(tkr => [tkr, endW * weights[tkr]]));
+
+    const rebalDetails = tickers.map(tkr => ({
+      ticker: tkr,
+      returnRate: tkrRets[tkr],
+      delta: after[tkr] - before[tkr],
+    }));
+
+    expense *= (1 + inflMean);
+    W = endW;
+    rows.push({ year, startW, withdrawal, rebalDetails, portReturn, endW });
+  }
+
+  return { rows, actualStart: +years[0], requestedStart: startYear };
+}
+
+function renderHistoricalResults() {
+  const entries = Object.entries(state.histResults);
+  const fmtW = v => v == null ? '—' : Math.round(v / 10000).toLocaleString() + ' 萬';
+  const fmtP = v => v == null ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+
+  let html = '';
+  for (const [name, r] of entries) {
+    if (!r || r.cantSim) {
+      html += `<p style="color:#9ca3af;font-size:12px;margin-bottom:12px"><strong>${name}</strong>：無法模擬 — ${r ? r.msg : '計算失敗'}</p>`;
+      continue;
+    }
+    if (!r.rows.length) {
+      html += `<p style="color:#9ca3af;font-size:12px;margin-bottom:12px">${name}：無可用資料</p>`;
+      continue;
+    }
+
+    const lastYear = r.rows[r.rows.length - 1].year;
+    const dataNote = r.actualStart > r.requestedStart
+      ? `<span style="color:#6b7280;font-size:11px;margin-left:6px">ℹ ${r.requestedStart} 年資料作為基準點，首年套用 ${r.actualStart} 年真實報酬 → 模擬期間 ${r.actualStart}～${lastYear} 年</span>`
+      : `<span style="color:#6b7280;font-size:11px;margin-left:6px">模擬期間 ${r.actualStart}～${lastYear} 年</span>`;
+
+    const tableRows = r.rows.map(row => {
+      if (row.bankrupt) {
+        return `<tr style="background:#fef2f2;color:#dc2626;font-weight:600">
+          <td>${row.year}</td><td>${fmtW(row.startW)}</td>
+          <td>${fmtW(row.withdrawal)}</td>
+          <td colspan="3" style="color:#dc2626">⚠ 資產提領後歸零，宣告破產</td>
+        </tr>`;
+      }
+
+      const bg = row.portReturn < -0.15 ? 'class="hist-row-down"'
+                 : row.portReturn > 0.20  ? 'class="hist-row-up"'
+                 : '';
+
+      const rebalHtml = row.rebalDetails.map(d => {
+        const retColor = d.returnRate >= 0 ? '#16a34a' : '#dc2626';
+        const actColor = d.delta > 0 ? '#2563eb' : '#9a3412';
+        const action = d.delta > 0 ? '買入' : '賣出';
+        return `<div style="white-space:nowrap"><span style="color:${retColor}">${d.ticker}(TWD): ${fmtP(d.returnRate)}</span><span style="color:#d1d5db"> → </span><span style="color:${actColor}">${action} ${fmtW(Math.abs(d.delta))}</span></div>`;
+      }).join('');
+
+      const prColor = row.portReturn >= 0 ? '#16a34a' : '#dc2626';
+      return `<tr ${bg}>
+        <td style="font-weight:600">${row.year}</td>
+        <td>${fmtW(row.startW)}</td>
+        <td>${fmtW(row.withdrawal)}</td>
+        <td style="font-size:11px;line-height:1.7">${rebalHtml}</td>
+        <td style="color:${prColor};font-weight:700;text-align:center">${fmtP(row.portReturn)}</td>
+        <td style="font-weight:700">${fmtW(row.endW)}</td>
+      </tr>`;
+    }).join('');
+
+    html += `<div style="margin-bottom:32px">
+      <p style="font-weight:600;font-size:13px;color:#374151;margin-bottom:6px">${name}${dataNote}</p>
+      <div style="overflow-x:auto">
+        <table class="summary-table" style="font-size:12px">
+          <thead><tr>
+            <th>年份</th>
+            <th>年初資產（提領前）</th>
+            <th>年度提領</th>
+            <th>各標的 TWD 報酬 → 再平衡</th>
+            <th style="text-align:center">組合報酬</th>
+            <th>年末資產</th>
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+
+  document.getElementById('histContent').innerHTML = html || '<p style="color:#9ca3af">無資料</p>';
+  document.getElementById('histCard').classList.remove('results-hidden');
+  document.getElementById('histCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+function runHistorical() {
+  if (!Object.keys(state.tickerData).length) { alert('請先載入資料'); return; }
+  if (!Object.keys(state.results).length) {
+    _runAll();
+    if (!Object.keys(state.results).length) return;
+  }
+  const startYear = +document.getElementById('histStartYear').value;
+  const initTwd   = +document.getElementById('initTwd').value;
+  const monthly   = +document.getElementById('mcMonthly').value;
+  const inflMean  = +document.getElementById('mcInflMean').value / 100;
+  const retYears  = +document.getElementById('mcYears').value;
+
+  state.histResults = {};
+  for (const [name, res] of Object.entries(state.results)) {
+    state.histResults[name] = computeHistoricalRetirement(res.assets, startYear, initTwd, monthly, inflMean, retYears);
+  }
+  renderHistoricalResults();
+}
+
+document.getElementById('histBtn').addEventListener('click', runHistorical);
 
 // Init
 addPortfolio();
