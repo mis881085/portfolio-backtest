@@ -68,12 +68,13 @@ def _fix_split_stitch(close: pd.Series, div: pd.Series, name: str) -> tuple[pd.S
 
 
 def _fix_div_scale(div: pd.Series, close: pd.Series, name: str) -> pd.Series:
+    # 門檻 15%：涵蓋台灣金融股高殖利率（8～12%），仍可攔截資料來源錯誤（>15% 屬異常）
     div = div.copy()
     for d in div[div > 0].index:
         y = div[d] / close[d]
-        if y > 0.06:
+        if y > 0.15:
             for ratio in [2, 3, 4, 5, 10]:
-                if div[d] / ratio / close[d] <= 0.06:
+                if div[d] / ratio / close[d] <= 0.15:
                     print(f"[修補] {name} {d:%Y-%m-%d} 配息殖利率 {y:.1%} 異常 → ÷{ratio} 校正為 {div[d]/ratio:.3f}")
                     div[d] /= ratio
                     break
@@ -187,8 +188,11 @@ def _fetch_finmind_tw(tkr: str, start: str) -> tuple[pd.Series, pd.Series] | Non
 
     資料來源：
       - TaiwanStockPrice    → 日線收盤價（未復權）
-      - TaiwanStockDividend → 股利政策，取 CashEarningsDistribution + CashExDividendTradingDate
-                              （只取現金股利；股票股利由 _fix_split_stitch 處理）
+      - TaiwanStockDividend → 股利政策
+          · CashEarningsDistribution + CashExDividendTradingDate   → 現金股利（配息）
+          · StockEarningsDistribution + StockExDividendTradingDate  → 股票股利（配股）
+            配股換算為等值現金（配股比例 × 除權日收盤價）加入 div，
+            確保 TRI = (close + div) / prevClose 正確還原除權前報酬。
     """
     stock_id = tkr.split(".")[0]
     try:
@@ -209,37 +213,61 @@ def _fetch_finmind_tw(tkr: str, start: str) -> tuple[pd.Series, pd.Series] | Non
         if first_date > pd.Timestamp(start):
             print(f"  [FinMind 警告] {tkr} 最早資料為 {first_date:%Y-%m-%d}")
 
-        # ── 2. 現金股利 ───────────────────────────────────────
+        # ── 2. 配息（現金）───────────────────────────────────────
         print(f"  [FinMind] 下載 {tkr} 股利 ...")
         div_rows = _finmind_req("TaiwanStockDividend", stock_id, start)
 
-        d = pd.Series(0.0, index=close.index)
+        cash_d = pd.Series(0.0, index=close.index)
         trading_dates = close.index
-        for row in div_rows:
-            cash = float(row.get("CashEarningsDistribution") or 0)
-            ex_date_str = (row.get("CashExDividendTradingDate") or "").strip()
-            if cash <= 0 or not ex_date_str:
-                continue
-            div_ts = pd.Timestamp(ex_date_str)
-            if div_ts in d.index:
-                d[div_ts] += cash
-            else:
-                loc = trading_dates.searchsorted(div_ts)
-                if loc < len(trading_dates):
-                    tgt = trading_dates[loc]
-                    d[tgt] += cash
-                    print(f"  [修補] {tkr} 除息日 {div_ts.date()} 非交易日 → 移至 {tgt.date()}")
+        stock_events: list[tuple[pd.Timestamp, float]] = []  # (除權日, ratio)
 
-        # ── 3. 清洗 pipeline ──────────────────────────────────
+        for row in div_rows:
+            # 現金股利（配息）
+            cash = float(row.get("CashEarningsDistribution") or 0)
+            cash_ex = (row.get("CashExDividendTradingDate") or "").strip()
+            if cash > 0 and cash_ex:
+                div_ts = pd.Timestamp(cash_ex)
+                if div_ts in cash_d.index:
+                    cash_d[div_ts] += cash
+                else:
+                    loc = trading_dates.searchsorted(div_ts)
+                    if loc < len(trading_dates):
+                        tgt = trading_dates[loc]
+                        cash_d[tgt] += cash
+                        print(f"  [修補] {tkr} 除息日 {div_ts.date()} 非交易日 → 移至 {tgt.date()}")
+
+            # 股票股利（配股）：先記錄 (ex_date, ratio)，等 close 調整後再換算
+            stock = float(row.get("StockEarningsDistribution") or 0)
+            stock_ex = (row.get("StockExDividendTradingDate") or "").strip()
+            if stock > 0 and stock_ex:
+                stock_events.append((pd.Timestamp(stock_ex), stock / 10))
+
+        # ── 3. 清洗 pipeline（僅針對現金股利）────────────────────
         thresh = pd.Series(
             np.where(close.index < pd.Timestamp("2015-06-01"), 0.075, 0.11),
             index=close.index,
         )
-        close, d = _fix_split_stitch(close, d, tkr)
+        close, cash_d = _fix_split_stitch(close, cash_d, tkr)
         close = _despike(close, thresh)
-        d = _apply_manual_divs(tkr, d, close)
-        d = _fix_div_scale(d, close, tkr)
-        return close, d
+        cash_d = _apply_manual_divs(tkr, cash_d, close)
+        cash_d = _fix_div_scale(cash_d, close, tkr)
+
+        # ── 4. 配股 → 等值現金（用已調整的 close 計算，不受 _fix_div_scale 影響）──
+        stock_d = pd.Series(0.0, index=close.index)
+        for ex_ts, ratio in stock_events:
+            if ex_ts in close.index:
+                tgt = ex_ts
+            else:
+                loc = trading_dates.searchsorted(ex_ts)
+                if loc >= len(trading_dates):
+                    continue
+                tgt = trading_dates[loc]
+                print(f"  [修補] {tkr} 除權日 {ex_ts.date()} 非交易日 → 移至 {tgt.date()}")
+            cash_equiv = ratio * float(close[tgt])
+            stock_d[tgt] += cash_equiv
+            print(f"  [配股] {tkr} {tgt:%Y-%m-%d} {ratio*10:.2f} 元/股 → 等值 {cash_equiv:.4f}")
+
+        return close, cash_d + stock_d
     except Exception as e:
         print(f"  [FinMind 失敗] {tkr}: {e}")
         return None
