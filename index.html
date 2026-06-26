@@ -143,6 +143,10 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
           <input type="number" id="initTwd" value="10000000" step="1000000">
         </div>
         <div class="setting-row">
+          <label>回測起始年（空白＝自動）</label>
+          <input type="number" id="backtestStartYear" placeholder="自動" min="1900" max="2100" step="1">
+        </div>
+        <div class="setting-row">
           <label>換匯單邊價差</label>
           <input type="number" id="fxSpread" value="0.0015" step="0.0001">
         </div>
@@ -195,7 +199,14 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
   </div>
 
   <button class="btn btn-primary btn-run" id="runBtn">執行回測</button>
-  <button class="btn btn-secondary btn-run" style="margin-top:8px" id="mcBtn">執行退休模擬（蒙地卡羅）</button>
+  <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <label style="font-size:11px;color:#6b7280;white-space:nowrap">資料參考起始年</label>
+      <input type="number" id="mcDataStartYear" placeholder="全部" min="1900" max="2100" step="1"
+             style="width:80px;padding:9px 8px;border-radius:8px;border:1px solid #d1d5db;font-size:14px;text-align:center">
+    </div>
+    <button class="btn btn-secondary btn-run" style="flex:1;margin-top:0" id="mcBtn">執行退休模擬（蒙地卡羅）</button>
+  </div>
   <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
     <div style="display:flex;flex-direction:column;gap:2px">
       <label style="font-size:11px;color:#6b7280;white-space:nowrap">退休起始年</label>
@@ -421,7 +432,7 @@ function renderPortfolios() {
 // Backtest Engine
 // ============================================================
 function runBacktest(assets, params) {
-  const { initTwd, fxSpread, twFee, twSellTax, usDivTax, twDivTax, usFee } = params;
+  const { initTwd, fxSpread, twFee, twSellTax, usDivTax, twDivTax, usFee, backtestStartYear } = params;
   const tickers = assets.map(a => a.ticker);
   const weights = {};
   assets.forEach(a => weights[a.ticker] = a.weight / 100);
@@ -449,7 +460,12 @@ function runBacktest(assets, params) {
   if (hasUS && fxDates.length > 0) firstDates.push(fxDates[0]);
   const commonStart = firstDates.reduce((a, b) => a > b ? a : b);
 
-  const allDates = Array.from(dateSet).filter(d => d >= commonStart).sort();
+  let effectiveStart = commonStart;
+  if (backtestStartYear) {
+    const userStart = `${backtestStartYear}-01-01`;
+    if (userStart > effectiveStart) effectiveStart = userStart;
+  }
+  const allDates = Array.from(dateSet).filter(d => d >= effectiveStart).sort();
   if (allDates.length === 0) return null;
 
   // Helpers
@@ -639,13 +655,14 @@ function _runAll() {
   if (Object.keys(state.tickerData).length === 0) { alert('請先載入資料檔'); return; }
 
   const params = {
-    initTwd:   +document.getElementById('initTwd').value,
-    fxSpread:  +document.getElementById('fxSpread').value,
-    twFee:     +document.getElementById('twFee').value,
-    twSellTax: +document.getElementById('twSellTax').value,
-    usDivTax:  +document.getElementById('usDivTax').value,
-    twDivTax:  +document.getElementById('twDivTax').value,
-    usFee:     +document.getElementById('usFee').value,
+    initTwd:            +document.getElementById('initTwd').value,
+    fxSpread:           +document.getElementById('fxSpread').value,
+    twFee:              +document.getElementById('twFee').value,
+    twSellTax:          +document.getElementById('twSellTax').value,
+    usDivTax:           +document.getElementById('usDivTax').value,
+    twDivTax:           +document.getElementById('twDivTax').value,
+    usFee:              +document.getElementById('usFee').value,
+    backtestStartYear:  +document.getElementById('backtestStartYear').value || null,
   };
 
   state.results = {};
@@ -910,7 +927,7 @@ function computeFxAnnualReturns() {
 
 async function runMonteCarloSim(assets, mcParams, onProgress) {
   const initTwd = +document.getElementById('initTwd').value;
-  const { retirementYears, simCount, monthlyWithdrawal, inflMean, inflStd } = mcParams;
+  const { retirementYears, simCount, monthlyWithdrawal, inflMean, inflStd, mcDataStartYear } = mcParams;
   const baseAnnualExpense = monthlyWithdrawal * 12;
 
   const tickers = assets.map(a => a.ticker);
@@ -937,7 +954,8 @@ async function runMonteCarloSim(assets, mcParams, onProgress) {
 
   // Common years across all variables
   const yearSets = varNames.map(v => new Set(Object.keys(annRets[v])));
-  const commonYears = [...yearSets[0]].filter(y => yearSets.every(s => s.has(y))).sort();
+  let commonYears = [...yearSets[0]].filter(y => yearSets.every(s => s.has(y))).sort();
+  if (mcDataStartYear) commonYears = commonYears.filter(y => +y >= mcDataStartYear);
   if (commonYears.length < 3) return null;
 
   // Build warnings
@@ -1053,6 +1071,7 @@ async function _runMC() {
     monthlyWithdrawal: +document.getElementById('mcMonthly').value,
     inflMean:          +document.getElementById('mcInflMean').value / 100,
     inflStd:           +document.getElementById('mcInflStd').value / 100,
+    mcDataStartYear:   +document.getElementById('mcDataStartYear').value || null,
   };
 
   const entries = Object.entries(state.results);
